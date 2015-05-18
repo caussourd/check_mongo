@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 # Copyright (c) 2012 Narayan Newton <nnewton@tag1consulting.com>
 # All rights reserved.
 #
@@ -25,11 +27,10 @@
 # of the authors and should not be interpreted as representing official policies, 
 # either expressed or implied, of Tag1 Consulting.
 
-#!/usr/bin/env python
-
 import getopt
 import sys
 import pymongo
+from pymongo import MongoClient
 
 try:
     from pymongo.son import SON
@@ -41,7 +42,7 @@ except ImportError:
 ##
 def main(argv):
   try:
-    opts, args = getopt.getopt(argv, "H:P:c:w:A:", ["host=", "port=", "critical=", "warn=", "action="])
+    opts, args = getopt.getopt(argv, "H:P:U:D:c:w:A:", ["host=", "port=", "mongodb_uri=", "database=", "critical=", "warn=", "action="])
   except getopt.GetoptError:
     usage()
     sys.exit(2)
@@ -50,6 +51,8 @@ def main(argv):
   critical_thresh = 60
   warning_thresh = 30
   server_port = 27017
+  database = 'default'
+  mongodb_uri = 'default'
   action = 'default' 
 
   for opt, arg in opts:
@@ -57,6 +60,10 @@ def main(argv):
       server_hostname = arg
     elif opt in ("-P", "--port"):
       server_port = int(arg)
+    elif opt in ("-U", "--mongodb_uri"):
+      mongodb_uri = arg
+    elif opt in ("-D", "--database"):
+      database = arg
     elif opt in ("-c", "--critical"):
       critical_thresh = int(arg)
     elif opt in ("-w", "--warning"):
@@ -64,12 +71,14 @@ def main(argv):
     elif opt in ("-A", "--action"):
       action = arg
 
-  if 'default' in (server_hostname, action):
+  if action == 'default' or (server_hostname == 'default' and mongodb_uri == 'default'):
     usage()
     sys.exit(2)
 
   if action == "connect":
-    connect_test(server_hostname, server_port, critical_thresh, warning_thresh)
+    if mongodb_uri == 'default':
+      mongodb_uri = 'mongodb://' + server_hostname + ':' + str(server_port) + '/'
+    connect_test(mongodb_uri, database)
   elif action == "slavelag":
     slave_lag_test(server_hostname, server_port, critical_thresh, warning_thresh)
   elif action == "count":
@@ -86,7 +95,7 @@ def main(argv):
 # Usage
 ##
 def usage():
-  print "Usage: ./check_mongo -H <hostname> -A <action> -P <port> -C <critical threshold> -W <warning threshold>"
+  print "Usage: ./check_mongo -H <hostname> -A <action> -U <mongodb_uri> -D <database> -P <port> -C <critical threshold> -W <warning threshold>"
   print "Possible actions:"
   print " - connect - Attempt to connect with the mongo instance"
   print " -- Takes a critical thresh for connection timeout and ignores the warning threshold"
@@ -96,7 +105,7 @@ def usage():
   print " -- Takes warning/critical thresholds for number of active ops"
   print " - long - Checks for long running queries"
   print " -- Takes warning/critical thresholds for seconds running"
-  print "NOTE: At least Hostname And Action arguments are required"
+  print "NOTE: At least Hostname/MongoDB_URI And Action arguments are required"
 
 ##
 # Check for long running operations
@@ -157,11 +166,15 @@ def operation_count_test(hostname, port, critical, warning):
 ##
 # Check that we can connect
 ##
-def connect_test(hostname, port, critical, warning):
+def connect_test(mongodb_uri, database):
+  client = MongoClient(mongodb_uri)
+  db = client[database]
   try:
-    con = pymongo.Connection(hostname, port, slave_okay=True, network_timeout=critical)
-  except pymongo.errors.ConnectionFailure: 
+    # it is a way to check we can actually connect to the DB
+    db.collection_names()
+  except (pymongo.errors.OperationFailure, pymongo.errors.ConnectionFailure) as e:
     print "CRITICAL - Connection to mongo failed"
+    print e
     sys.exit(2)
 
   print "OK - Connect accepted"
